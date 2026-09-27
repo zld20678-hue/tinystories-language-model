@@ -1,8 +1,10 @@
 # TinyStories Language Model from Scratch
 
-I built a small autoregressive Transformer on TinyStories to understand the full path from raw text to training, generation, and inference optimization. The point of this project was not to make the best possible story model. I wanted to be able to explain what every stage was doing, measure what changed when I modified something, and see where the obvious ideas stopped working.
+I came into this project as a non-technical founder who wanted to get much closer to the technical work instead of treating AI infrastructure as a black box. In a short window, I wanted to go from “I roughly know what a language model does” to being able to train one from scratch, debug it, profile it, explain the important code paths, and make a real inference optimization decision based on data rather than intuition.
 
-The final model is still tiny by modern standards: about 5.29M parameters, trained on an Apple M4 with PyTorch MPS.
+So this repo is less about building an impressive story generator and more about the learning curve itself: tokenizer → data pipeline → Transformer → training → validation → generation → profiling → inference optimization.
+
+The final model is small by modern standards — about 5.29M parameters on an Apple M4 using PyTorch MPS — which made it possible to inspect the whole stack instead of hiding behind a large framework.
 
 ## Model setup
 
