@@ -5,41 +5,37 @@ from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 
-# 1. 读取我们的 21,197 篇训练故事
+
+# Load the 21,197-story training subset used for the first experiments.
 dataset = load_from_disk("data/tinystories_1pct")
 
-# 2. 创建一个空白 tokenizer
+# Start with an empty BPE tokenizer and learn the vocabulary from TinyStories.
 tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-
-# 3. 告诉 tokenizer 如何先处理文字
 tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
 
-# 4. 决定 tokenizer 最多学习多少种 token
 trainer = BpeTrainer(
     vocab_size=4096,
     min_frequency=2,
-    special_tokens=["[UNK]", "[PAD]", "[BOS]", "[EOS]"]
+    special_tokens=["[UNK]", "[PAD]", "[BOS]", "[EOS]"],
 )
 
-# 5. 一批一批把训练故事交给 tokenizer
+
 def batch_iterator(batch_size=1000):
+    """Yield text in chunks so tokenizer training does not load it all at once."""
     for i in range(0, len(dataset), batch_size):
         yield dataset[i:i + batch_size]["text"]
 
-# 6. 真正训练 tokenizer
+
 tokenizer.train_from_iterator(
     batch_iterator(),
     trainer=trainer,
-    length=len(dataset)
+    length=len(dataset),
 )
 
-# 7. 设置如何把 token 重新还原成文字
 tokenizer.decoder = ByteLevelDecoder()
-
-# 8. 保存训练好的 tokenizer
 tokenizer.save("tokenizer/tokenizer.json")
 
-# 9. 测试一句话
+# Small round-trip check: text -> tokens -> IDs -> decoded text.
 test_text = "The puppy was playing in the garden."
 encoded = tokenizer.encode(test_text)
 
