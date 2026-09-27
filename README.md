@@ -1,4 +1,4 @@
-# TinyStories Language Model from Scratch
+# TinyStories Language Model from Scratch — Training, Profiling, and Inference Experiments
 
 I came into this project as a non-technical founder who had spent a lot of time around AI products without ever going all the way down to the mechanics. I wanted to change that quickly.
 
@@ -25,8 +25,9 @@ The most useful part was that several of my "obvious" optimization ideas did not
 
 ## Repository map
 
-The root files follow the order I built the system:
+The root files roughly follow the order I built the system:
 
+- `prepare_dataset_subsets.py` — downloads TinyStories and creates the local 1%, 5%, and validation subsets expected by the project
 - `train_tokenizer.py` — trains the custom BPE tokenizer
 - `prepare_data.py` / `prepare_data_5pct.py` — converts TinyStories text into token IDs
 - `model.py` — defines the Transformer
@@ -156,35 +157,40 @@ Before this project, I would have loosely described both things as "making infer
 
 ## How to reproduce the project
 
-The repository intentionally does not include downloaded datasets, `.npy` token arrays, virtual environments, or model checkpoints.
+The repository intentionally does not include downloaded datasets, `.npy` token arrays, virtual environments, or model checkpoints. Those are ignored so the repo stays small and the experiment can be rebuilt from source.
 
 ```bash
-# 1. Install dependencies
+# 1. Create an environment and install dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Train the tokenizer
+# 2. Download TinyStories and create the local subsets
+python prepare_dataset_subsets.py
+
+# 3. Train the tokenizer
 python train_tokenizer.py
 
-# 3. Prepare tokenized data
+# 4. Encode the 1% training + validation data
 python prepare_data.py
-# or the larger experiment
-python prepare_data_5pct.py
 
-# 4. Train
+# 5. Baseline training
 python train.py
-# or
+
+# Optional: reproduce the 5% experiment
+python prepare_data_5pct.py
 python train_5pct.py
 
-# 5. Generate after producing the expected checkpoint
+# 6. Generate text after a checkpoint exists
 python generate.py
 
-# 6. Run the main inference experiments
+# 7. Run the main inference experiments
 python benchmark_inference.py
 python profile_inference.py
 python benchmark_batching.py
 ```
 
-The scripts preserve the paths and checkpoint names from the runs used for this project. Reproducing one of the later experiments therefore means first producing the corresponding checkpoint or editing the checkpoint constant to point to your own run.
+The later inference scripts use checkpoint paths from the experiments in this repo. If you train a different run, point their `CHECKPOINT` constant at the checkpoint you want to benchmark.
 
 ## Reading this repo in 5 minutes
 
