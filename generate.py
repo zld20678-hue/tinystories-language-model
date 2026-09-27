@@ -14,7 +14,7 @@ model = TinyLanguageModel().to(device)
 
 # Load the trained weights
 checkpoint = torch.load(
-    "checkpoints/final.pt",
+    "checkpoints/final_5pct.pt",
     map_location=device,
     weights_only=False,
 )

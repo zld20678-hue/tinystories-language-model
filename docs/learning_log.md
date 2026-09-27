@@ -58,3 +58,28 @@ Generation:
 - 18.36 tokens/sec
 
 This result will serve as the baseline for inference optimization.
+
+## Milestone 2 — Increasing training data
+
+After extending the original 1% dataset model from 1,000 to 4,000 steps, validation loss improved from about 3.55 to about 2.95.
+
+However, the rate of improvement slowed significantly, suggesting diminishing returns from repeatedly training on the same small subset.
+
+I therefore changed one experimental variable: dataset size.
+
+The model architecture, tokenizer, context length, optimizer family, and hardware remained fixed, while the training subset increased from 1% to 5% of TinyStories.
+
+The 5% dataset contained:
+
+- 23,775,548 training tokens
+- approximately 5,805 batch-equivalent steps at 32 × 128 tokens per step
+
+I trained the model from random initialization for 6,000 steps.
+
+Final validation loss:
+
+- 5% model: 2.6264
+
+The generated stories showed better grammar and local coherence than the smaller-data models, although entity consistency and long-range story logic were still limited.
+
+At this point I stopped further model scaling and moved to inference optimization, since the main training objective had been demonstrated successfully.

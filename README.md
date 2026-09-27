@@ -51,3 +51,37 @@ Baseline generation speed:
 2. Compare generation quality at later checkpoints.
 3. Profile inference bottlenecks.
 4. Implement and benchmark inference optimization.
+
+## Milestone 2 — More training data
+
+After observing diminishing returns on the 1% TinyStories subset, I kept the model architecture fixed and increased the training data to 5% of TinyStories.
+
+### Controlled comparison
+
+The following settings were kept unchanged:
+
+- Model size: ~5.29M parameters
+- Layers: 4
+- Hidden dimension: 256
+- Attention heads: 4
+- Context length: 128
+- Tokenizer vocabulary: 4,096
+- Batch size: 32
+
+Only the amount of training data was increased.
+
+### Results
+
+| Experiment | Training data | Steps | Validation loss |
+| --- | ---: | ---: | ---: |
+| Baseline | 1% TinyStories | 1,000 | ~3.55 |
+| Extended training | 1% TinyStories | 4,000 | ~2.95 |
+| More data | 5% TinyStories | 6,000 | 2.6264 |
+
+The 1% model continued improving with more optimization steps, but the rate of improvement slowed substantially.
+
+Increasing the dataset to 5% produced a larger improvement in validation performance than continuing to repeatedly train on the 1% subset.
+
+The 5% model also generated more grammatically stable and locally coherent stories, although entity consistency and longer-range narrative logic remained imperfect.
+
+Given the three-day scope of the task, I chose to stop scaling training here and move to inference optimization rather than continuing to brute-force model quality.
