@@ -158,8 +158,6 @@ Before this project, I would have loosely described both things as "making infer
 
 The repository intentionally does not include downloaded datasets, `.npy` token arrays, virtual environments, or model checkpoints.
 
-At a high level, the workflow is:
-
 ```bash
 # 1. Install dependencies
 pip install -r requirements.txt
@@ -180,13 +178,25 @@ python train_5pct.py
 # 5. Generate after placing / producing the expected checkpoint
 python generate.py
 
-# 6. Run inference experiments
+# 6. Run the main inference experiments
 python benchmark_inference.py
 python profile_inference.py
 python benchmark_batching.py
 ```
 
-Several benchmark scripts reference the checkpoints produced during the experiments, so exact checkpoint paths may need to match the training run being reproduced.
+The exact data directories and checkpoint names in the scripts reflect the runs used for this project. Reproducing a particular experiment may require matching those paths or editing the corresponding constants.
+
+## Reading this repo in 5 minutes
+
+If you are reviewing the project rather than reproducing it, I would read it in this order:
+
+1. this README for the decisions and results
+2. `model.py` for the model itself
+3. `train_5pct.py` for the final training loop
+4. `profile_inference.py` for how I located the inference bottleneck
+5. `validate_kv.py` + `model_kv.py` for the correctness-first KV-cache experiment
+6. `benchmark_batching.py` for the final throughput result
+7. `docs/learning_log.md` for the longer learning process
 
 ## What I would do next
 
