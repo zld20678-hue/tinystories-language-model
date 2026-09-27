@@ -175,7 +175,7 @@ python train.py
 # or
 python train_5pct.py
 
-# 5. Generate after placing / producing the expected checkpoint
+# 5. Generate after producing the expected checkpoint
 python generate.py
 
 # 6. Run the main inference experiments
@@ -184,7 +184,7 @@ python profile_inference.py
 python benchmark_batching.py
 ```
 
-The exact data directories and checkpoint names in the scripts reflect the runs used for this project. Reproducing a particular experiment may require matching those paths or editing the corresponding constants.
+The scripts preserve the paths and checkpoint names from the runs used for this project. Reproducing one of the later experiments therefore means first producing the corresponding checkpoint or editing the checkpoint constant to point to your own run.
 
 ## Reading this repo in 5 minutes
 
