@@ -1,6 +1,5 @@
 import argparse
 import csv
-import os
 import random
 import sys
 import time
@@ -17,7 +16,8 @@ if str(REPO_ROOT) not in sys.path:
 from model import TinyLanguageModel
 
 
-BATCH_SIZE = 32
+MICROBATCH_SIZE = 32
+EFFECTIVE_TOKENS_PER_UPDATE = 4096
 LEARNING_RATE = 3e-4
 SEED = 42
 TRAIN_DATA_PATH = REPO_ROOT / "data" / "train_tokens_5pct.npy"
@@ -25,19 +25,22 @@ VAL_DATA_PATH = REPO_ROOT / "data" / "val_tokens.npy"
 RESULTS_DIR = REPO_ROOT / "task_b" / "results"
 CHECKPOINT_DIR = REPO_ROOT / "checkpoints" / "task_b"
 
-# Full-budget design: same total training tokens in both conditions.
+# Each tuple is: (sequence length, optimizer updates, gradient-accumulation microbatches).
+# Every optimizer update consumes the same effective token count (4096), so baseline
+# and curriculum are matched on BOTH total tokens and number of parameter updates.
 FULL_SCHEDULES = {
-    "baseline": [(128, 6000)],
-    "curriculum": [(32, 8000), (64, 4000), (128, 2000)],
+    "baseline": [(128, 6000, 1)],
+    "curriculum": [(32, 2000, 4), (64, 2000, 2), (128, 2000, 1)],
 }
 
-# 10% pilot with the same relative token allocation.
+# 10% pilot: 600 optimizer updates and 2,457,600 tokens in both conditions.
 PILOT_SCHEDULES = {
-    "baseline": [(128, 600)],
-    "curriculum": [(32, 800), (64, 400), (128, 200)],
+    "baseline": [(128, 600, 1)],
+    "curriculum": [(32, 200, 4), (64, 200, 2), (128, 200, 1)],
 }
 
-# Evaluate every 1,024,000 tokens in the full run; scaled to 102,400 in pilot.
+# Since every optimizer update represents 4,096 training tokens, these correspond
+# to every 250 updates in the full run and every 25 updates in the pilot.
 EVAL_TOKEN_INTERVAL = {
     "full": 1_024_000,
     "pilot": 102_400,
@@ -70,7 +73,7 @@ def set_seed(seed):
 
 def sample_batch(data, seq_len, device, rng):
     max_start = len(data) - seq_len - 1
-    starts = rng.integers(0, max_start, size=BATCH_SIZE)
+    starts = rng.integers(0, max_start, size=MICROBATCH_SIZE)
 
     x = np.stack([data[i:i + seq_len] for i in starts])
     y = np.stack([data[i + 1:i + seq_len + 1] for i in starts])
@@ -99,18 +102,23 @@ def evaluate(model, data, seq_len, device, seed, eval_batches=EVAL_BATCHES):
     return float(np.mean(losses))
 
 
-def train_one_step(model, optimizer, train_data, seq_len, device, rng):
-    x, y = sample_batch(train_data, seq_len, device, rng)
-    logits = model(x)
-    loss = F.cross_entropy(
-        logits.reshape(-1, logits.size(-1)),
-        y.reshape(-1),
-    )
-
+def train_one_update(model, optimizer, train_data, seq_len, accumulation_steps, device, rng):
+    """One optimizer update with a fixed effective token budget of 4,096 tokens."""
     optimizer.zero_grad(set_to_none=True)
-    loss.backward()
+    losses = []
+
+    for _ in range(accumulation_steps):
+        x, y = sample_batch(train_data, seq_len, device, rng)
+        logits = model(x)
+        loss = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            y.reshape(-1),
+        )
+        (loss / accumulation_steps).backward()
+        losses.append(loss.item())
+
     optimizer.step()
-    return loss.item()
+    return float(np.mean(losses))
 
 
 def save_checkpoint(path, model, optimizer, metadata):
@@ -148,27 +156,29 @@ def run(experiment, budget):
     model = TinyLanguageModel().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 
-    run_name = f"{experiment}_{budget}_seed{SEED}"
+    # v2 marks the corrected design that controls both tokens and optimizer updates.
+    run_name = f"{experiment}_{budget}_v2_seed{SEED}"
     csv_path = RESULTS_DIR / f"{run_name}.csv"
     if csv_path.exists():
         raise FileExistsError(
             f"{csv_path} already exists. Rename/delete it before rerunning so results are not mixed."
         )
 
-    print("Task B context-length experiment")
+    print("Task B context-length experiment (controlled v2)")
     print("Experiment:", experiment)
     print("Budget:", budget)
     print("Device:", device)
     print("Seed:", SEED)
-    print("Schedule:", schedule)
+    print("Microbatch size:", MICROBATCH_SIZE)
+    print("Effective tokens / optimizer update:", EFFECTIVE_TOKENS_PER_UPDATE)
+    print("Schedule (seq_len, updates, accumulation):", schedule)
     print("Eval token interval:", f"{eval_token_interval:,}")
 
-    total_steps = 0
+    total_updates = 0
     tokens_seen = 0
     next_eval_at = eval_token_interval
     start_time = time.perf_counter()
 
-    # Initial evaluation before any optimizer updates.
     initial_vals = {
         seq_len: evaluate(model, val_data, seq_len, device, seed=10_000 + seq_len)
         for seq_len in VAL_CONTEXTS
@@ -180,9 +190,10 @@ def run(experiment, budget):
             "budget": budget,
             "seed": SEED,
             "stage": 0,
-            "global_step": 0,
-            "stage_step": 0,
+            "global_update": 0,
+            "stage_update": 0,
             "train_seq_len": 0,
+            "accumulation_steps": 0,
             "tokens_seen": 0,
             "train_loss": "",
             "val_loss_32": initial_vals[32],
@@ -195,17 +206,32 @@ def run(experiment, budget):
 
     last_train_loss = None
 
-    for stage_index, (seq_len, stage_steps) in enumerate(schedule, start=1):
-        print(f"\nStage {stage_index}: seq_len={seq_len}, steps={stage_steps}")
-        tokens_per_step = BATCH_SIZE * seq_len
-
-        for stage_step in range(1, stage_steps + 1):
-            model.train()
-            last_train_loss = train_one_step(
-                model, optimizer, train_data, seq_len, device, train_rng
+    for stage_index, (seq_len, stage_updates, accumulation_steps) in enumerate(schedule, start=1):
+        tokens_per_update = MICROBATCH_SIZE * seq_len * accumulation_steps
+        if tokens_per_update != EFFECTIVE_TOKENS_PER_UPDATE:
+            raise ValueError(
+                f"Stage seq={seq_len} consumes {tokens_per_update} tokens/update; "
+                f"expected {EFFECTIVE_TOKENS_PER_UPDATE}."
             )
-            total_steps += 1
-            tokens_seen += tokens_per_step
+
+        print(
+            f"\nStage {stage_index}: seq_len={seq_len}, updates={stage_updates}, "
+            f"accumulation={accumulation_steps}"
+        )
+
+        for stage_update in range(1, stage_updates + 1):
+            model.train()
+            last_train_loss = train_one_update(
+                model,
+                optimizer,
+                train_data,
+                seq_len,
+                accumulation_steps,
+                device,
+                train_rng,
+            )
+            total_updates += 1
+            tokens_seen += EFFECTIVE_TOKENS_PER_UPDATE
 
             if tokens_seen >= next_eval_at:
                 synchronize(device)
@@ -227,9 +253,10 @@ def run(experiment, budget):
                     "budget": budget,
                     "seed": SEED,
                     "stage": stage_index,
-                    "global_step": total_steps,
-                    "stage_step": stage_step,
+                    "global_update": total_updates,
+                    "stage_update": stage_update,
                     "train_seq_len": seq_len,
+                    "accumulation_steps": accumulation_steps,
                     "tokens_seen": tokens_seen,
                     "train_loss": last_train_loss,
                     "val_loss_32": vals[32],
@@ -241,8 +268,8 @@ def run(experiment, budget):
                 append_row(csv_path, row)
 
                 print(
-                    f"tokens={tokens_seen:,} | step={total_steps} | seq={seq_len} | "
-                    f"train={last_train_loss:.4f} | "
+                    f"tokens={tokens_seen:,} | update={total_updates} | seq={seq_len} | "
+                    f"accum={accumulation_steps} | train={last_train_loss:.4f} | "
                     f"val32={vals[32]:.4f} | val64={vals[64]:.4f} | val128={vals[128]:.4f} | "
                     f"elapsed={elapsed:.1f}s"
                 )
@@ -260,9 +287,10 @@ def run(experiment, budget):
                 "budget": budget,
                 "seed": SEED,
                 "stage": stage_index,
-                "global_step": total_steps,
-                "stage_step": stage_steps,
+                "global_update": total_updates,
+                "stage_update": stage_updates,
                 "seq_len": seq_len,
+                "accumulation_steps": accumulation_steps,
                 "tokens_seen": tokens_seen,
                 "last_train_loss": last_train_loss,
             },
@@ -284,9 +312,10 @@ def run(experiment, budget):
             "budget": budget,
             "seed": SEED,
             "stage": len(schedule),
-            "global_step": total_steps,
-            "stage_step": schedule[-1][1],
+            "global_update": total_updates,
+            "stage_update": schedule[-1][1],
             "train_seq_len": schedule[-1][0],
+            "accumulation_steps": schedule[-1][2],
             "tokens_seen": tokens_seen,
             "train_loss": last_train_loss,
             "val_loss_32": final_vals[32],
@@ -306,7 +335,7 @@ def run(experiment, budget):
             "experiment": experiment,
             "budget": budget,
             "seed": SEED,
-            "global_step": total_steps,
+            "global_update": total_updates,
             "tokens_seen": tokens_seen,
             "last_train_loss": last_train_loss,
             "val_loss_32": final_vals[32],
@@ -319,7 +348,7 @@ def run(experiment, budget):
     print("\n=== COMPLETE ===")
     print("Results:", csv_path)
     print("Final checkpoint:", final_checkpoint)
-    print("Total steps:", total_steps)
+    print("Total optimizer updates:", total_updates)
     print("Tokens seen:", f"{tokens_seen:,}")
     print("Elapsed:", f"{total_elapsed / 60:.2f} min")
     print(
