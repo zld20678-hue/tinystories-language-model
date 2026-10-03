@@ -8,7 +8,7 @@ The goal was not to build an impressive story generator. A 5.29M-parameter model
 
 The most useful part was that several of my "obvious" optimization ideas did not work.
 
-> **Best result:** batching increased aggregate inference throughput from **392.31 to 2,593.03 tokens/s** on an Apple M4 — about **6.61×** — while also making the latency/throughput tradeoff impossible to ignore.
+> **Best inference result:** batching increased aggregate inference throughput from **392.31 to 2,593.03 tokens/s** on an Apple M4 — about **6.61×** — while also making the latency/throughput tradeoff impossible to ignore.
 
 ## Project at a glance
 
@@ -21,7 +21,7 @@ The most useful part was that several of my "obvious" optimization ideas did not
 - **Training data:** TinyStories
 - **Optimizer:** AdamW
 - **Hardware:** Apple M4, PyTorch MPS
-- **Best validation loss:** 2.6264 on the 5% training-data experiment
+- **Best validation loss in Task A:** 2.6264 on the 5% training-data experiment
 
 ## Repository map
 
@@ -39,6 +39,7 @@ The root files roughly follow the order I built the system:
 - `profile_*.py` — bottleneck profiling
 - `model_kv*.py` — custom KV-cache implementations
 - `validate_kv*.py` — numerical correctness checks for the cached decoder
+- `task_b/` — controlled context-length curriculum experiment, replication runs, analysis, and report
 - `docs/learning_log.md` — the longer learning / decision log
 
 I intentionally kept the individual experiment scripts instead of collapsing everything into one polished abstraction. For this project, the progression of experiments is part of the work.
@@ -155,6 +156,20 @@ That is **not** a 6.61× latency improvement for one user. It is a system-throug
 
 Before this project, I would have loosely described both things as "making inference faster." I would not anymore.
 
+## 6. Task B: context-length curriculum
+
+After Task A, I used the same model to ask a training-dynamics question: **does gradually increasing context length change how a small Transformer learns?**
+
+I compared full-context training (`128` throughout) against a `32 → 64 → 128` curriculum. The corrected experiment matched both total training tokens and optimizer-update count using gradient accumulation, and I repeated the full comparison across seeds `42`, `7`, and `123`.
+
+Across the three seeds, curriculum finished with lower mean validation loss at context lengths 32, 64, and 128. The advantage shrank with context length: `0.0391` at 32, `0.0262` at 64, and only `0.0067` at 128.
+
+The more interesting result was the trajectory. The curriculum model initially fell behind on full-context validation, then caught up quickly each time the training context expanded. My main takeaway was that **curriculum changed the path of learning much more than it changed the final long-context endpoint.**
+
+The first pilot also exposed an important confound: matching total tokens alone gave curriculum more optimizer updates. I redesigned the experiment before trusting the result. That correction made the effect smaller, but more believable.
+
+See [`task_b/README.md`](task_b/README.md) for the experiment overview and [`task_b/REPORT.md`](task_b/REPORT.md) for the full report.
+
 ## How to reproduce the project
 
 The repository intentionally does not include downloaded datasets, `.npy` token arrays, virtual environments, or model checkpoints. Those are ignored so the repo stays small and the experiment can be rebuilt from source.
@@ -198,17 +213,18 @@ If you are reviewing the project rather than reproducing it, I would read it in 
 
 1. this README for the decisions and results
 2. `model.py` for the model itself
-3. `train_5pct.py` for the final training loop
+3. `train_5pct.py` for the final Task A training loop
 4. `profile_inference.py` for how I located the inference bottleneck
 5. `validate_kv.py` + `model_kv.py` for the correctness-first KV-cache experiment
-6. `benchmark_batching.py` for the final throughput result
-7. `docs/learning_log.md` for the longer learning process
+6. `benchmark_batching.py` for the final inference-throughput result
+7. `task_b/REPORT.md` for the training-dynamics experiment
+8. `docs/learning_log.md` for the longer Task A learning process
 
 ## What I would do next
 
 If I continued this project, I would split the next work into two tracks:
 
-- **model quality:** more data, a larger context window, and a somewhat larger model
-- **inference systems:** a decoder designed around fused / backend-friendly incremental kernels rather than a Python-level KV-cache path
+- **model quality / training dynamics:** test other curriculum transition points, larger context gaps, and more seeds
+- **inference systems:** build an incremental decoder around fused / backend-friendly kernels rather than a Python-level KV-cache path
 
-The part I care about most is not that batching "won." It is that profiling changed my assumptions several times. Going from product-level intuition to being able to reason about loss curves, numerical correctness, kernel overhead, and latency-vs-throughput tradeoffs was the actual point of the exercise.
+The part I care about most is not that batching "won" or that curriculum finished slightly lower. It is that measurement changed my assumptions several times. Going from product-level intuition to being able to reason about loss curves, numerical correctness, experimental confounds, kernel overhead, and latency-vs-throughput tradeoffs was the actual point of the exercise.
