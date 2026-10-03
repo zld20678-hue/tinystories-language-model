@@ -1,7 +1,16 @@
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Allow this script to be run directly from task_b/ while importing model.py
+# from the repository root.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from model import TinyLanguageModel
 
